@@ -1,4 +1,4 @@
-# RotorHazard server on an original Raspberry Pi Zero W
+# Wifi access point and RotorHazard server on a Raspberry Pi Zero W
 
 This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/RotorHazard) server with:
 
@@ -184,6 +184,8 @@ Update and install the required packages:
 
 ```bash
 sudo apt update
+sudo apt install screen
+screen -R
 sudo apt full-upgrade -y
 sudo hostnamectl set-hostname rotorhazard
 sudo timedatectl set-timezone Asia/Shanghai
@@ -196,39 +198,19 @@ sudo systemctl enable --now avahi-daemon
 sudo reboot
 ```
 
+`sudo nano /etc/hosts` add `rotorhazard` to 127.0.0.1
+
 Reconnect over SSH after the reboot.
 
-### Verify and enforce key-only SSH
+### Verify key-only SSH
 
-Create the same SSH hardening drop-in even when Imager already configured key-only access. Keeping it explicit makes the final policy easy to audit:
+
 
 ```bash
-sudo tee /etc/ssh/sshd_config.d/10-key-only.conf >/dev/null <<'EOF'
-PubkeyAuthentication yes
-AuthenticationMethods publickey
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-PermitRootLogin no
-EOF
-
-sudo sshd -t
-sudo systemctl restart ssh
 sudo sshd -T | grep -E '^(authenticationmethods|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
 sudo ss -lntp | grep -E 'LISTEN.+:22[[:space:]]'
 ```
-
-The effective output must show `authenticationmethods publickey`, public-key authentication enabled, password and keyboard-interactive authentication disabled, and root login disabled. The listening-socket output should show port 22 on `0.0.0.0`, `[::]`, or both—not only on the home address.
-
-Before closing the current SSH session, open a second Ubuntu terminal and prove that the key works:
-
-```bash
-ssh -o PasswordAuthentication=no \
-  -i ~/.ssh/rotorhazard_ed25519 \
-  rhadmin@rotorhazard.local
-```
-
-Keep the first session open until this succeeds. A password-only attempt should fail:
+A password-only attempt should fail:
 
 ```bash
 ssh -o PubkeyAuthentication=no \
@@ -293,7 +275,7 @@ Record permanent MAC addresses, substituting the actual temporary interface name
 
 ```bash
 cat /sys/class/net/wlan1/address
-cat /sys/class/net/enx001122334455/address
+cat /sys/class/net/eth0/address
 ```
 
 ### Give both USB adapters stable names
@@ -318,11 +300,11 @@ MACAddress=11:22:33:44:55:66
 Name=rh-eth
 ```
 
-Use `sudoedit` to create both files, replace the example MACs, and reboot:
+Use `sudo nano` to create both files, replace the example MACs, and reboot:
 
 ```bash
-sudoedit /etc/systemd/network/10-rh-wifi.link
-sudoedit /etc/systemd/network/11-rh-eth.link
+sudo nano /etc/systemd/network/10-rh-wifi.link
+sudo nano /etc/systemd/network/11-rh-eth.link
 sudo reboot
 ```
 
@@ -332,7 +314,7 @@ Verify with `ip -br link`. Do not continue until the devices are `rh-wifi` and `
 
 NetworkManager will own the bridge and wired port. `hostapd` will add the AP to the bridge, so first tell NetworkManager not to manage `rh-wifi`.
 
-Create `/etc/NetworkManager/conf.d/20-rh-ap-unmanaged.conf`:
+`sudo nano /etc/NetworkManager/conf.d/20-rh-ap-unmanaged.conf`:
 
 ```ini
 [keyfile]
@@ -363,7 +345,7 @@ ip -br address | grep -E '^(br0|rh-eth)[[:space:]]'
 
 ## 7. Configure the RTL8812BU access point
 
-Create `/etc/hostapd/hostapd.conf`, replacing country, SSID, and passphrase:
+`sudo nano /etc/hostapd/hostapd.conf`, replacing country, SSID, and passphrase:
 
 ```ini
 country_code=CN
@@ -390,7 +372,7 @@ wpa_passphrase=REPLACE_WITH_A_STRONG_RACE_PASSWORD
 Start with 2.4 GHz for broad client compatibility. Pick channel 1, 6, or 11 after checking local use with `sudo iw dev wlan0 scan`.
 
 ```bash
-sudoedit /etc/hostapd/hostapd.conf
+sudo nano /etc/hostapd/hostapd.conf
 sudo sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 sudo rfkill unblock wifi
 sudo systemctl unmask hostapd
@@ -402,11 +384,68 @@ iw dev rh-wifi info
 iw dev rh-wifi station dump | grep -c '^Station '
 ```
 
-No `max_num_sta` value is configured, so this runbook does not impose an artificial Wi-Fi station-count limit. This does not make capacity infinite: hostapd, the RTL8812BU driver/firmware, radio airtime, USB 2.0, memory, and the Pi Zero's CPU all have finite capacity. The `/24` address plan has 253 DHCP addresses shared by wired and wireless clients. Load-test the expected number of simultaneously active RotorHazard browsers before an event.
+### Set maximum permitted AP transmit power
+
+`iw` expresses transmit power in mBm: `2000` mBm is `20` dBm. First inspect the active regulatory domain and the limits shown for the RTL8812BU PHY:
+
+The commands below use its stable runbook name, `rh-wifi`. If it is still currently named `wlan1`, substitute `wlan1` for the immediate checks and command; the persistent service should use `rh-wifi` after the stable-name step.
+
+```bash
+iw reg get
+iw dev rh-wifi info
+iw phy "$(iw dev rh-wifi info | awk '/wiphy/ {print "phy" $2}')" info | \
+  sed -n '/Frequencies:/,/valid interface combinations:/p'
+```
+
+For the `CN` 2.4 GHz configuration in this runbook, request 20 dBm and inspect the effective value:
+
+```bash
+sudo iw dev rh-wifi set txpower fixed 2000
+iw dev rh-wifi info
+```
+
+The kernel, regulatory database, driver, firmware, and adapter hardware may clamp the result below 20 dBm. Do not change the country or patch the driver to bypass the legal limit. If the selected country's displayed channel maximum is lower, convert that lower value to mBm and use it instead.
+
+Make the setting persistent after `hostapd` starts. Create `sudo nano /etc/systemd/system/rh-wifi-txpower.service` with:
+
+```ini
+[Unit]
+Description=Set RotorHazard AP transmit power to the permitted maximum
+Requires=hostapd.service
+After=hostapd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw dev rh-wifi set txpower fixed 2000
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and verify it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now rh-wifi-txpower.service
+systemctl --no-pager --full status rh-wifi-txpower.service
+iw dev rh-wifi info
+```
+
+If the service fails with `Invalid argument` or `Operation not supported`, the active driver does not accept that fixed value. Change the unit's `ExecStart` to regulatory automatic mode, then reload and restart it:
+
+```ini
+ExecStart=/usr/sbin/iw dev rh-wifi set txpower auto
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart rh-wifi-txpower.service
+```
 
 ## 8. Configure DHCP and local DNS with no default route
 
-Keep the packaged dnsmasq configuration and add `/etc/dnsmasq.d/rotorhazard.conf`:
+Keep the packaged dnsmasq configuration and add `sudo nano /etc/dnsmasq.d/rotorhazard.conf`:
 
 ```ini
 # Serve only the isolated race bridge.
@@ -431,13 +470,12 @@ host-record=rotorhazard.lan,10.77.0.1
 Validate and enable dnsmasq:
 
 ```bash
-sudoedit /etc/dnsmasq.d/rotorhazard.conf
 sudo dnsmasq --test
 sudo systemctl enable --now dnsmasq
 systemctl --no-pager --full status dnsmasq
 ```
 
-Create `/etc/sysctl.d/90-rotorhazard-isolation.conf` to ensure the Pi does not route traffic between networks:
+Create `sudo nano /etc/sysctl.d/90-rotorhazard-isolation.conf` to ensure the Pi does not route traffic between networks:
 
 ```ini
 net.ipv4.ip_forward=0
@@ -445,7 +483,6 @@ net.ipv6.conf.all.forwarding=0
 ```
 
 ```bash
-sudoedit /etc/sysctl.d/90-rotorhazard-isolation.conf
 sudo sysctl --system
 sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding
 ```
@@ -504,17 +541,28 @@ This timer uses USB serial; do **not** enable the GPIO serial console or add UAR
 
 ## 10. Install RotorHazard
 
-Use the upstream installer for the latest stable release:
+Clone the source code directly from GitHub. Use a stable release tag rather than the `main` branch, which contains development code. The current stable release used by this runbook is `v4.5.0`:
 
 ```bash
 cd ~
+python3 --version
 python3 -m venv --system-site-packages ~/.venv
-source ~/.venv/bin/activate
-wget https://rotorhazard.com/install.sh
-sh install.sh
+~/.venv/bin/python -m pip install --upgrade pip setuptools wheel
+
+git clone --depth 1 --branch v4.5.0 \
+  https://github.com/RotorHazard/RotorHazard.git \
+  ~/RotorHazard
+
+~/.venv/bin/python -m pip install --upgrade --no-cache-dir \
+  -r ~/RotorHazard/src/server/requirements.txt
+
+mkdir -p ~/rh-data
+git -C ~/RotorHazard describe --tags --exact-match
 ```
 
-Activate this environment again with `source ~/.venv/bin/activate` whenever running RotorHazard maintenance commands interactively. The systemd service below invokes its Python executable directly and does not need shell activation.
+The version check must print `v4.5.0`. RotorHazard requires Python 3.10 or newer. Dependency installation can take a long time on the single-core ARMv6 Pi Zero W because packages without compatible binary wheels must compile locally; keep the Pi powered and do not interrupt it.
+
+The commands invoke the virtual environment's Python explicitly, so shell activation is optional. If preferred, activate it with `source ~/.venv/bin/activate`. The systemd service below also invokes its Python executable directly.
 
 Test it interactively before creating a service:
 
@@ -581,12 +629,13 @@ Confirm:
 1. `RotorHazard` Wi-Fi is visible and accepts the WPA2 password.
 2. Wi-Fi and wired race clients get `10.77.0.x/24` with no gateway.
 3. Both open `http://10.77.0.1:5000` and `http://rotorhazard.lan:5000`.
-4. `systemctl is-active hostapd dnsmasq rotorhazard` prints `active` three times.
+4. `systemctl is-active hostapd rh-wifi-txpower dnsmasq rotorhazard` prints `active` four times.
 5. `bridge link` shows `rh-wifi` and `rh-eth` on `br0`.
 6. RotorHazard shows eight timer nodes and live levels.
 7. Key-only SSH works from the Ubuntu host over race Wi-Fi and race Ethernet at `10.77.0.1`.
 8. Home Wi-Fi remains usable for key-only SSH, but race clients cannot reach it or the Internet.
 9. An SSH password-only attempt is rejected on every interface.
+10. `iw dev rh-wifi info` shows the effective transmit power permitted by the driver and regulatory domain.
 
 ## Troubleshooting
 
@@ -597,8 +646,8 @@ bridge link
 nmcli device status
 iw dev
 rfkill list
-systemctl --no-pager --full status hostapd dnsmasq rotorhazard
-journalctl -b -u hostapd -u dnsmasq -u rotorhazard --no-pager
+systemctl --no-pager --full status hostapd rh-wifi-txpower dnsmasq rotorhazard
+journalctl -b -u hostapd -u rh-wifi-txpower -u dnsmasq -u rotorhazard --no-pager
 journalctl -k -b --no-pager | grep -Ei 'rtw|88x2bu|8812|8822|firmware|usb|under.?voltage'
 ```
 
@@ -609,6 +658,7 @@ journalctl -k -b --no-pager | grep -Ei 'rtw|88x2bu|8812|8822|firmware|usb|under.
 - **RTL8812BU disappears or resets:** use a powered hub and better power supply/cable; check the kernel journal.
 - **RTL8812BU has no interface or AP mode:** check `ethtool -i`, `lsmod`, and `iw phy`; install the fallback driver only if the in-kernel driver is unavailable or unusable.
 - **Wi-Fi works until a kernel upgrade:** check `dkms status`. This concern applies to the fallback `88x2bu` driver, not the in-kernel `rtw88` driver.
+- **Transmit-power service fails:** compare `iw reg get`, the channel limit in `iw phy ... info`, and `journalctl -u rh-wifi-txpower`; use `txpower auto` if the driver rejects a fixed setting.
 - **SSH key is rejected:** on a local console, check `namei -l /home/rhadmin/.ssh/authorized_keys`, `journalctl -u ssh`, and `sudo sshd -T`; the directory must be mode `700`, the file mode `600`, and both owned by `rhadmin`.
 - **SSH works through home Wi-Fi but not the AP/Ethernet:** confirm `10.77.0.1/24` is on `br0`, port 22 listens on `0.0.0.0` or `[::]`, and no `ListenAddress` restricts sshd.
 - **Timer permission denied:** check `groups`, `ls -l /dev/serial/by-id/...`, and `SupplementaryGroups=dialout`.
@@ -624,18 +674,33 @@ sudo shutdown now
 
 ## Updating RotorHazard
 
-Back up `~/rh-data`, then use the stable-update script:
+Check the [RotorHazard releases](https://github.com/RotorHazard/RotorHazard/releases), read the release notes, and choose an exact stable tag. Do not update from `main`. The example below uses `v4.5.0`; replace it with the newer stable tag when one exists.
+
+First back up the data directory and confirm that the source checkout has no local modifications:
 
 ```bash
 sudo systemctl stop rotorhazard
 cp -a ~/rh-data "$HOME/rh-data.backup.$(date +%Y%m%d-%H%M%S)"
-cd ~
-wget https://rotorhazard.com/update.sh
-sh update.sh
-sudo systemctl start rotorhazard
+git -C ~/RotorHazard status --short
 ```
 
-Check release notes before updating immediately before an event.
+The `git status` command must produce no output. If it shows changes, preserve or resolve them before continuing. Then fetch and check out the selected release and update its dependencies:
+
+```bash
+RH_VERSION=v4.5.0
+cd ~/RotorHazard
+git fetch --depth 1 origin tag "$RH_VERSION"
+git checkout --detach "$RH_VERSION"
+
+~/.venv/bin/python -m pip install --upgrade --no-cache-dir \
+  -r ~/RotorHazard/src/server/requirements.txt
+
+git describe --tags --exact-match
+sudo systemctl start rotorhazard
+systemctl --no-pager --full status rotorhazard
+```
+
+The version check must print the selected tag. Do not update immediately before an event; allow time for an ARMv6 dependency build and a complete functional test.
 
 ## References
 
