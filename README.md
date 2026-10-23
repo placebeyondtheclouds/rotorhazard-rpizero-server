@@ -641,6 +641,17 @@ systemctl --no-pager --full status rotorhazard
 
 The version command must print the selected tag. Update early enough to test before an event.
 
+## how to set up a race
+
+- http://10.77.0.1:5000 
+- format -> Fastest Consecutive Laps Qualifier -> + -> no time limit
+- format -> event -> consequtive laps base 8, discard new short laps
+- pilots -> +
+- classes and heats -> + unclassified, rename -> assign pilots to frequencies
+- run -> select mode to that unclassified heat name, select race type. race management -> shortest lap time 8 sec
+- run -> start race -> stop, save and clear
+- format -> event -> archive/new
+
 ## References
 
 - [RotorHazard software setup](https://github.com/RotorHazard/RotorHazard/blob/main/doc/Software%20Setup.md)
