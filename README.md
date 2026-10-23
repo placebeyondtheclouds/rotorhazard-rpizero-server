@@ -10,18 +10,24 @@ This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/Roto
 - a [widscan58](https://github.com/CapnBry/widscan58/blob/main/docs/RotorHazard.md) eight-seat timer connected over USB serial; and
 - RotorHazard starting automatically at boot.
 
-```text
-home Wi-Fi/Internet
-        |
-  wlan0 (DHCP; administration only)
-        |
-  Raspberry Pi Zero W (original, ARMv6)
-        |
-  br0 = 10.77.0.1/24
-    |              |
-rh-wifi (AP)    rh-eth (USB Ethernet)
-    |              |
-Wi-Fi racers    wired racers
+```mermaid
+flowchart TB
+    HOME["Home Wi-Fi / Internet"]
+    WLAN0["wlan0<br/>DHCP; administration only"]
+    PI["Raspberry Pi Zero W<br/>original, ARMv6"]
+    BR0["br0<br/>10.77.0.1/24"]
+    WIFI["rh-wifi<br/>RTL8812BU access point"]
+    ETH["rh-eth<br/>USB Ethernet"]
+    WIFI_CLIENTS["Wi-Fi race clients"]
+    ETH_CLIENTS["Wired race clients"]
+
+    HOME --- WLAN0
+    WLAN0 --- PI
+    PI --- BR0
+    BR0 --- WIFI
+    BR0 --- ETH
+    WIFI --- WIFI_CLIENTS
+    ETH --- ETH_CLIENTS
 ```
 
 Clients on either race interface receive `10.77.0.0/24` addresses and can reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`. They are not given a gateway. Kernel IP forwarding also remains disabled, so the race LAN is not routed through the home connection.
