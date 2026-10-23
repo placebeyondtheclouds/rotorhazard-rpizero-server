@@ -1,14 +1,6 @@
 # Wifi access point and RotorHazard server on a Raspberry Pi Zero W
 
-This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/RotorHazard) server with:
-
-- the Pi's built-in Wi-Fi (`wlan0`) connected to a home network for installation and administration;
-- a Realtek RTL8812BU USB Wi-Fi adapter running a WPA2 access point;
-- a USB Ethernet adapter on the same race LAN as the access point;
-- DHCP and local DNS on the race LAN, deliberately **without a default route**;
-- no administrator-configured hostapd station-count cap;
-- a [widscan58](https://github.com/CapnBry/widscan58/blob/main/docs/RotorHazard.md) eight-seat timer connected over USB serial; and
-- RotorHazard starting automatically at boot.
+This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/RotorHazard) server. The built-in Wi-Fi joins the home network for administration; USB Wi-Fi and Ethernet provide an isolated race LAN; a [widscan58](https://github.com/CapnBry/widscan58/blob/main/docs/RotorHazard.md) timer connects over USB serial.
 
 ```mermaid
 flowchart TB
@@ -30,16 +22,14 @@ flowchart TB
     ETH --- ETH_CLIENTS
 ```
 
-Clients on either race interface receive `10.77.0.0/24` addresses and can reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`. They are not given a gateway. Kernel IP forwarding also remains disabled, so the race LAN is not routed through the home connection.
+Race clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
 
 > [!IMPORTANT]
-> This guide targets the **original, single-core Raspberry Pi Zero W (ARMv6)** and current 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer, so installation and startup will be slow and capacity is limited. Build and load-test the complete system before relying on it at a race; do not add a desktop environment or unrelated services.
+> This guide targets the **original, single-core Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer, so build and load-test this lower-powered setup before an event.
 
 ## 1. Hardware and values to choose
 
-Use a powered USB hub. A Pi Zero has one USB data port, and an RTL8812BU adapter, USB Ethernet adapter, and timer together can exceed the Pi's reliable USB power budget.
-
-You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a flashed/configured widscan58 timer with a data-capable cable.
+You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a widscan58 timer with a data-capable cable. Use a powered hub because the three USB devices can exceed the Pi's power budget.
 
 Choose and substitute these values throughout:
 
@@ -53,18 +43,18 @@ Choose and substitute these values throughout:
 | Race subnet | `10.77.0.0/24` |
 | Pi race address | `10.77.0.1` |
 
-Choose strong home, local Pi-user, and race-AP passwords. The Pi-user password remains useful for local console access and `sudo`, but SSH password authentication will be disabled.
+Use strong passwords. The Pi-user password is for the local console and `sudo`; SSH will be key-only.
 
 ## 2. Flash the SD card and configure first-boot Wi-Fi
 
-On the Ubuntu administration computer, install and start Raspberry Pi Imager (or install its current package from the [official Imager page](https://www.raspberrypi.com/software/) if it is not available in your Ubuntu release):
+On the Ubuntu computer, install Raspberry Pi Imager (use the [official package](https://www.raspberrypi.com/software/) if Ubuntu does not provide it):
 
 ```bash
 sudo apt update
 sudo apt install rpi-imager openssl
 ```
 
-Create a dedicated Ed25519 administration key. Protect the private key with a passphrase and back it up securely:
+Create and back up a passphrase-protected administration key:
 
 ```bash
 if [ ! -e "$HOME/.ssh/rotorhazard_ed25519" ]; then
@@ -74,17 +64,17 @@ cat "$HOME/.ssh/rotorhazard_ed25519.pub"
 rpi-imager
 ```
 
-Use it to write **Raspberry Pi OS Lite (32-bit)**. Do **not** select the 64-bit image: the original Pi Zero W uses an ARMv6 CPU and cannot boot it. 
+Write **Raspberry Pi OS Lite (32-bit)**; the ARMv6 Pi Zero W cannot boot the 64-bit image.
 
 ### Manual SD-card configuration instead of Imager customisation
 
-Ubuntu can edit both the FAT `bootfs` and ext4 `rootfs` partitions directly. Insert the freshly imaged card and identify it by its size and model:
+Insert the freshly imaged card and identify it by size and model:
 
 ```bash
 lsblk -p -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS,MODEL
 ```
 
-The device names below are examples. Replace `/dev/sdX1` and `/dev/sdX2` with the actual card partitions; for a built-in card reader they may instead be `/dev/mmcblk0p1` and `/dev/mmcblk0p2`. Never guess the device. If Ubuntu automatically mounted either partition, unmount it through Files or with `udisksctl unmount -b /dev/mmcblk0p1 && udisksctl unmount -b /dev/mmcblk0p2` and the corresponding partition 2 before continuing.
+Use the actual card partitions—never guess. Built-in readers commonly use `/dev/mmcblk0p1` and `/dev/mmcblk0p2`. Unmount any automatically mounted partitions before continuing.
 
 ```bash
 sudo mkdir -p /mnt/rh-boot /mnt/rh-root
@@ -105,7 +95,7 @@ Save the following single line as `/mnt/rh-boot/userconf.txt`, replacing the ent
 rhadmin:$6$REPLACE_WITH_THE_COMPLETE_HASH
 ```
 
-The password creates the local account and remains usable at a directly attached console, but the SSH configuration below disables password login. Install the dedicated public key for the first user (UID/GID 1000):
+Install the public key for the first user (UID/GID 1000):
 
 ```bash
 sudo install -d -m 700 -o 1000 -g 1000 /mnt/rh-root/home/rhadmin/.ssh
@@ -125,14 +115,14 @@ ChallengeResponseAuthentication no
 PermitRootLogin no
 ```
 
-Do not add a `ListenAddress`: its absence makes OpenSSH listen on every available interface, including home Wi-Fi and the race bridge.
+Do not add `ListenAddress`; SSH must listen on all interfaces.
 
 ```bash
 sync
 sudo umount /mnt/rh-boot /mnt/rh-root
 ```
 
-Use temporary wired access to continue. Before configuring `br0` later in this runbook, the USB Ethernet adapter is an ordinary DHCP client:
+Use the USB Ethernet adapter temporarily as a home-router DHCP client:
 
 1. Connect the USB Ethernet adapter to a LAN port on the home router.
 2. Boot the Pi and find its new wired address in the router's DHCP leases.
@@ -142,7 +132,7 @@ Use temporary wired access to continue. Before configuring `br0` later in this r
    ssh -i ~/.ssh/rotorhazard_ed25519 rhadmin@WIRED_IP_FROM_ROUTER
    ```
 
-4. On the Pi, set the country, unblock Wi-Fi, rescan, and create a fresh NetworkManager connection. `--ask` prompts for the Wi-Fi password without placing it in shell history:
+4. On the Pi, create the home Wi-Fi connection. `--ask` keeps its password out of shell history:
 
    ```bash
    sudo raspi-config nonint do_wifi_country CN
@@ -162,15 +152,13 @@ Use temporary wired access to continue. Before configuring `br0` later in this r
 
    For a hidden SSID, add `hidden yes` to the final command.
 
-5. Confirm that `wlan0` is connected and has a home-network address:
+5. Confirm that `wlan0` has a home-network address:
 
    ```bash
    nmcli device status
    nmcli -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS device show wlan0
    ip route
    ```
-
-
 ## 3. First boot and base setup
 
 Insert the card, connect the powered hub and power, find `rotorhazard.local` or its lease in the home router, and log in:
@@ -179,14 +167,14 @@ Insert the card, connect the powered hub and power, find `rotorhazard.local` or 
 ssh -i ~/.ssh/rotorhazard_ed25519 rhadmin@rotorhazard.local
 ```
 
-Confirm that the correct image is running. An original Zero W normally reports `armv6l` and `32`:
+Confirm that the image reports `armv6l` and `32`:
 
 ```bash
 uname -m
 getconf LONG_BIT
 ```
 
-Update and install the required packages:
+Update and install packages:
 
 ```bash
 sudo apt update
@@ -204,18 +192,17 @@ sudo systemctl enable --now avahi-daemon
 sudo reboot
 ```
 
-`sudo nano /etc/hosts` add `rotorhazard` to 127.0.0.1
+Add `rotorhazard` to the `127.0.0.1` line in `/etc/hosts` with `sudo nano /etc/hosts`.
 
 Reconnect over SSH after the reboot.
 
 ### Verify key-only SSH
 
-
-
 ```bash
 sudo sshd -T | grep -E '^(authenticationmethods|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
 sudo ss -lntp | grep -E 'LISTEN.+:22[[:space:]]'
 ```
+
 A password-only attempt should fail:
 
 ```bash
@@ -236,30 +223,28 @@ uname -r
 sudo dmesg | grep -Ei 'rtw|88x2bu|8812|8822|firmware|usb'
 ```
 
-The built-in radio is normally `wlan0`. The RTL8812BU may initially be `wlan1` or a `wlx...` name; USB Ethernet is often `eth0` or `enx...`.
+The built-in radio is normally `wlan0`; USB adapters may initially use `wlan1`, `wlx...`, `eth0`, or `enx...`.
 
 ### Prefer the in-kernel driver
 
-Raspberry Pi OS kernels 6.12 and newer normally include the standards-compliant `rtw88` driver. Check the driver bound to the RTL8812BU, substituting its temporary interface name:
+Kernels 6.12 and newer normally include `rtw88`. Check the bound driver, substituting the temporary interface name:
 
 ```bash
 sudo ethtool -i wlan1
 lsmod | grep -E 'rtw_8822bu|rtw88|88x2bu'
 ```
 
-If this reports a driver such as `rtw_8822bu`, keep it and do not install another driver. Confirm that the RTL8812BU's PHY offers AP mode (use `iw dev` to find which `phy#` belongs to `wlan1`):
+If it reports `rtw_8822bu`, keep it. Find the adapter's `phy#` with `iw dev` and confirm AP mode:
 
 ```bash
 iw phy phy1 info | sed -n '/Supported interface modes:/,/Band /p'
 ```
 
-The output must contain `* AP`. If it does, skip the fallback below.
+If the output contains `* AP`, skip the fallback.
 
 ### Fallback for a missing or unusable in-kernel driver
 
-Only use this fallback if the adapter has no interface, no bound driver, or no AP mode. The community `88x2bu` driver supports ARMv6 and hostapd, but it is an out-of-tree DKMS module and is no longer the preferred choice on kernel 6.12 or newer.
-
-Never keep two competing RTL8812BU drivers installed. If a previous third-party driver is present, remove it using that driver's own removal instructions before proceeding.
+Use this only when the adapter has no interface, bound driver, or AP mode. Remove any existing third-party RTL8812BU driver first; never install competing drivers.
 
 ```bash
 sudo apt install -y raspberrypi-kernel-headers build-essential bc dkms git
@@ -271,9 +256,7 @@ sudo sh install-driver.sh NoPrompt
 sudo reboot
 ```
 
-Compilation is very slow on the original Pi Zero W. After reboot, repeat the `ethtool`, `lsmod`, and AP-mode checks above. The fallback driver normally appears as `88x2bu`. Keep `~/src/88x2bu-20210702`; its removal and upgrade scripts are needed for future kernel upgrades.
-
-If the adapter is still missing, inspect `journalctl -k -b` for driver, firmware, USB-power, or undervoltage errors.
+After reboot, repeat the checks above. Compilation is slow on the Pi Zero W. Keep the cloned directory for driver upgrades and removal. If the adapter remains missing, inspect `journalctl -k -b`.
 
 ## 5. Identify and give the USB adapters stable names
 
@@ -283,8 +266,6 @@ Record permanent MAC addresses, substituting the actual temporary interface name
 cat /sys/class/net/wlan1/address
 cat /sys/class/net/eth0/address
 ```
-
-### Give both USB adapters stable names
 
 Create `/etc/systemd/network/10-rh-wifi.link` with the RTL8812BU MAC:
 
@@ -306,7 +287,7 @@ MACAddress=11:22:33:44:55:66
 Name=rh-eth
 ```
 
-Use `sudo nano` to create both files, replace the example MACs, and reboot:
+Create both files, replace the example MACs, and reboot:
 
 ```bash
 sudo nano /etc/systemd/network/10-rh-wifi.link
@@ -314,11 +295,11 @@ sudo nano /etc/systemd/network/11-rh-eth.link
 sudo reboot
 ```
 
-Verify with `ip -br link`. Do not continue until the devices are `rh-wifi` and `rh-eth` and home Wi-Fi still uses `wlan0`.
+Run `ip -br link`; continue only when the devices are `rh-wifi`, `rh-eth`, and `wlan0`.
 
 ## 6. Build the race-LAN bridge
 
-NetworkManager will own the bridge and wired port. `hostapd` will add the AP to the bridge, so first tell NetworkManager not to manage `rh-wifi`.
+NetworkManager owns the bridge and wired port; hostapd owns `rh-wifi`.
 
 `sudo nano /etc/NetworkManager/conf.d/20-rh-ap-unmanaged.conf`:
 
@@ -375,7 +356,7 @@ wpa_passphrase=REPLACE_WITH_A_STRONG_RACE_PASSWORD
 # No max_num_sta setting: hostapd applies no administrator-configured client cap.
 ```
 
-Start with 2.4 GHz for broad client compatibility. Pick channel 1, 6, or 11 after checking local use with `sudo iw dev wlan0 scan`.
+Use 2.4 GHz for compatibility. Choose channel 1, 6, or 11 after running `sudo iw dev wlan0 scan`.
 
 ```bash
 sudo nano /etc/hostapd/hostapd.conf
@@ -392,9 +373,7 @@ iw dev rh-wifi station dump | grep -c '^Station '
 
 ### Set maximum permitted AP transmit power
 
-`iw` expresses transmit power in mBm: `2000` mBm is `20` dBm. First inspect the active regulatory domain and the limits shown for the RTL8812BU PHY:
-
-The commands below use its stable runbook name, `rh-wifi`. If it is still currently named `wlan1`, substitute `wlan1` for the immediate checks and command; the persistent service should use `rh-wifi` after the stable-name step.
+Inspect the regulatory and adapter limits (`2000` mBm equals `20` dBm):
 
 ```bash
 iw reg get
@@ -403,16 +382,16 @@ iw phy "$(iw dev rh-wifi info | awk '/wiphy/ {print "phy" $2}')" info | \
   sed -n '/Frequencies:/,/valid interface combinations:/p'
 ```
 
-For the `CN` 2.4 GHz configuration in this runbook, request 20 dBm and inspect the effective value:
+Request 20 dBm and inspect the effective value:
 
 ```bash
 sudo iw dev rh-wifi set txpower fixed 2000
 iw dev rh-wifi info
 ```
 
-The kernel, regulatory database, driver, firmware, and adapter hardware may clamp the result below 20 dBm. Do not change the country or patch the driver to bypass the legal limit. If the selected country's displayed channel maximum is lower, convert that lower value to mBm and use it instead.
+Use no more than the displayed country/channel limit. The system may clamp the request; do not bypass its regulatory controls.
 
-Make the setting persistent after `hostapd` starts. Create `sudo nano /etc/systemd/system/rh-wifi-txpower.service` with:
+Create `/etc/systemd/system/rh-wifi-txpower.service` with `sudo nano`:
 
 ```ini
 [Unit]
@@ -438,7 +417,7 @@ systemctl --no-pager --full status rh-wifi-txpower.service
 iw dev rh-wifi info
 ```
 
-If the service fails with `Invalid argument` or `Operation not supported`, the active driver does not accept that fixed value. Change the unit's `ExecStart` to regulatory automatic mode, then reload and restart it:
+If the service reports `Invalid argument` or `Operation not supported`, replace `ExecStart` with:
 
 ```ini
 ExecStart=/usr/sbin/iw dev rh-wifi set txpower auto
@@ -451,7 +430,7 @@ sudo systemctl restart rh-wifi-txpower.service
 
 ## 8. Configure DHCP and local DNS with no default route
 
-Keep the packaged dnsmasq configuration and add `sudo nano /etc/dnsmasq.d/rotorhazard.conf`:
+Create `/etc/dnsmasq.d/rotorhazard.conf` with `sudo nano`:
 
 ```ini
 # Serve only the isolated race bridge.
@@ -481,7 +460,7 @@ sudo systemctl enable --now dnsmasq
 systemctl --no-pager --full status dnsmasq
 ```
 
-Create `sudo nano /etc/sysctl.d/90-rotorhazard-isolation.conf` to ensure the Pi does not route traffic between networks:
+Create `/etc/sysctl.d/90-rotorhazard-isolation.conf` with `sudo nano`:
 
 ```ini
 net.ipv4.ip_forward=0
@@ -493,7 +472,7 @@ sudo sysctl --system
 sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding
 ```
 
-Connect one test device to race Wi-Fi and one to USB Ethernet. Each must get `10.77.0.x/24`, reach `10.77.0.1`, and have **no default route**. On Linux clients:
+Test both Wi-Fi and Ethernet clients. Each must receive `10.77.0.x/24`, reach `10.77.0.1`, and have no default route:
 
 ```bash
 ip address
@@ -501,11 +480,11 @@ ip route
 ping -c 3 10.77.0.1
 ```
 
-Some phones label the Wi-Fi “No Internet”; that is expected. Tell the phone to stay connected.
+“No Internet” is expected; keep the client connected.
 
 ### Verify SSH over both race interfaces
 
-On the Ubuntu administration host, connect to the `RotorHazard` Wi-Fi and verify key-only SSH through the AP:
+From Ubuntu, connect to the race Wi-Fi and test SSH:
 
 ```bash
 ssh -o PasswordAuthentication=no \
@@ -513,7 +492,7 @@ ssh -o PasswordAuthentication=no \
   rhadmin@10.77.0.1
 ```
 
-Disconnect the Ubuntu host from the race Wi-Fi, connect its Ethernet port to `rh-eth`, and leave the Ubuntu Ethernet connection on automatic DHCP. Confirm that Ubuntu receives a `10.77.0.x/24` address, then run the same SSH command:
+Then disconnect Wi-Fi, connect through `rh-eth` using automatic DHCP, and repeat:
 
 ```bash
 ip -br address
@@ -522,7 +501,7 @@ ssh -o PasswordAuthentication=no \
   rhadmin@10.77.0.1
 ```
 
-Both paths terminate on `br0`, so they intentionally use the same server address and SSH host key. `ssh rhadmin@rotorhazard.lan` may be used in place of the IP address after local DNS is confirmed working.
+Both paths use `10.77.0.1` and the same SSH host key. After verifying DNS, `rotorhazard.lan` also works.
 
 ## 9. Prepare the widscan58 timer
 
