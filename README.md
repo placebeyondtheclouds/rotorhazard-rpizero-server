@@ -4,7 +4,7 @@ This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/Roto
 
 ```mermaid
 flowchart TB
-    HOME["Home Wi-Fi / Internet"]
+    HOME["Home Wi-Fi / Internet (for initial set up)"]
     WLAN0["wlan0<br/>DHCP; administration only"]
     PI["Raspberry Pi Zero W<br/>original, ARMv6"]
     BR0["br0<br/>10.77.0.1/24"]
@@ -159,6 +159,7 @@ Use the USB Ethernet adapter temporarily as a home-router DHCP client:
    nmcli -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS device show wlan0
    ip route
    ```
+
 ## 3. First boot and base setup
 
 Insert the card, connect the powered hub and power, find `rotorhazard.local` or its lease in the home router, and log in:
@@ -332,7 +333,7 @@ ip -br address | grep -E '^(br0|rh-eth)[[:space:]]'
 
 ## 7. Configure the RTL8812BU access point
 
-`sudo nano /etc/hostapd/hostapd.conf`, replacing country, SSID, and passphrase:
+Create `/etc/hostapd/hostapd.conf` with `sudo nano`, replacing country, SSID, and passphrase:
 
 ```ini
 country_code=CN
@@ -359,7 +360,6 @@ wpa_passphrase=REPLACE_WITH_A_STRONG_RACE_PASSWORD
 Use 2.4 GHz for compatibility. Choose channel 1, 6, or 11 after running `sudo iw dev wlan0 scan`.
 
 ```bash
-sudo nano /etc/hostapd/hostapd.conf
 sudo sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
 sudo rfkill unblock wifi
 sudo systemctl unmask hostapd
@@ -505,7 +505,7 @@ Both paths use `10.77.0.1` and the same SSH host key. After verifying DNS, `roto
 
 ## 9. Prepare the widscan58 timer
 
-Follow the widscan58 RotorHazard instructions before attaching it:
+Prepare the widscan58 before attaching it:
 
 1. Flash the board at <https://capnbry.github.io/widscan58/>.
 2. Connect, select **RotorHazard mode**, configure receiver gain/level/filter, and click **Save**.
@@ -520,13 +520,11 @@ find /dev/serial/by-id -maxdepth 1 -type l -print 2>/dev/null
 readlink -f /dev/serial/by-id/*
 ```
 
-Use `/dev/serial/by-id/...` later, not `/dev/ttyACM0`, because the latter can change. Log out and back in (or reboot) for `dialout` membership to take effect.
-
-This timer uses USB serial; do **not** enable the GPIO serial console or add UART overlays meant for a GPIO-connected RotorHazard node.
+Record the `/dev/serial/by-id/...` path; `/dev/ttyACM0` can change. Log out and back in for the new group membership. Do not enable GPIO UART options for this USB timer.
 
 ## 10. Install RotorHazard
 
-Clone the source code directly from GitHub. Use a stable release tag rather than the `main` branch, which contains development code. The current stable release used by this runbook is `v4.5.0`:
+Clone the stable `v4.5.0` release rather than the development branch:
 
 ```bash
 cd ~
@@ -545,9 +543,7 @@ mkdir -p ~/rh-data
 git -C ~/RotorHazard describe --tags --exact-match
 ```
 
-The version check must print `v4.5.0`. RotorHazard requires Python 3.10 or newer. Dependency installation can take a long time on the single-core ARMv6 Pi Zero W because packages without compatible binary wheels must compile locally; keep the Pi powered and do not interrupt it.
-
-The commands invoke the virtual environment's Python explicitly, so shell activation is optional. If preferred, activate it with `source ~/.venv/bin/activate`. The systemd service below also invokes its Python executable directly.
+The version check must print `v4.5.0`. Installation may take a long time on the ARMv6 Pi.
 
 Test it interactively before creating a service:
 
@@ -556,23 +552,17 @@ cd ~/RotorHazard/src/server
 ~/.venv/bin/python server.py
 ```
 
-From a race client, open `http://10.77.0.1:5000`, complete first-run administrator setup, then stop the test server with `Ctrl-C`.
+Open `http://10.77.0.1:5000` from a race client, complete setup (settings -> frequency setup -> raceband 8 preset), then stop the server with `Ctrl-C`.
 
 ### Configure the USB timer
 
-Open **Advanced Settings → Hardware → Serial Ports** and enter a JSON list containing the exact stable path found above, for example:
+In **Advanced Settings → Hardware → Serial Ports**, enter the stable path found using `find /dev/serial/by-id -maxdepth 1 -type l -print 2>/dev/null`
 
-```json
-["/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_123456-if00"]
-```
-
-Save and restart RotorHazard. It should discover eight nodes. Receiver gain and filter settings remain configured in the widscan58 UI.
-
-If the web setting is unavailable, stop RotorHazard, edit `~/rh-data/config.json`, and set `GENERAL.SERIAL_PORTS` to that list. Never edit `config.json` while RotorHazard is running because the server can overwrite it.
+Restart RotorHazard and confirm eight nodes. If the setting is unavailable, stop RotorHazard and set `GENERAL.SERIAL_PORTS` in `~/rh-data/config.json`; never edit it while the server is running.
 
 ## 11. Start RotorHazard automatically
 
-Run this while logged in as the user that installed RotorHazard:
+Run as the user that installed RotorHazard:
 
 ```bash
 RH_USER="$(id -un)"
@@ -603,65 +593,27 @@ sudo systemctl enable --now rotorhazard.service
 systemctl --no-pager --full status rotorhazard.service
 ```
 
-Reboot once, then perform the acceptance test:
+Reboot:
 
 ```bash
 sudo reboot
 ```
 
-Confirm:
+Confirm after reboot:
 
-1. `RotorHazard` Wi-Fi is visible and accepts the WPA2 password.
-2. Wi-Fi and wired race clients get `10.77.0.x/24` with no gateway.
-3. Both open `http://10.77.0.1:5000` and `http://rotorhazard.lan:5000`.
-4. `systemctl is-active hostapd rh-wifi-txpower dnsmasq rotorhazard` prints `active` four times.
-5. `bridge link` shows `rh-wifi` and `rh-eth` on `br0`.
-6. RotorHazard shows eight timer nodes and live levels.
-7. Key-only SSH works from the Ubuntu host over race Wi-Fi and race Ethernet at `10.77.0.1`.
-8. Home Wi-Fi remains usable for key-only SSH, but race clients cannot reach it or the Internet.
-9. An SSH password-only attempt is rejected on every interface.
-10. `iw dev rh-wifi info` shows the effective transmit power permitted by the driver and regulatory domain.
+1. Both race interfaces assign `10.77.0.x/24` without a gateway and open RotorHazard at `10.77.0.1:5000` and `rotorhazard.lan:5000`.
+2. `systemctl is-active hostapd rh-wifi-txpower dnsmasq rotorhazard` prints `active` four times.
+3. `bridge link` shows `rh-wifi` and `rh-eth` on `br0`.
+4. RotorHazard shows eight timer nodes and live levels.
+5. Key-only SSH works through home Wi-Fi, race Wi-Fi, and race Ethernet; password-only SSH fails.
+6. Race clients cannot reach the home network or Internet.
+7. `iw dev rh-wifi info` shows the effective transmit power.
 
-## Troubleshooting
 
-```bash
-ip -br address
-ip route
-bridge link
-nmcli device status
-iw dev
-rfkill list
-systemctl --no-pager --full status hostapd rh-wifi-txpower dnsmasq rotorhazard
-journalctl -b -u hostapd -u rh-wifi-txpower -u dnsmasq -u rotorhazard --no-pager
-journalctl -k -b --no-pager | grep -Ei 'rtw|88x2bu|8812|8822|firmware|usb|under.?voltage'
-```
-
-- **`hostapd` says the interface is busy:** `rh-wifi` must be unmanaged in `nmcli device status`; restart NetworkManager and hostapd after fixing it.
-- **Clients get no lease:** confirm `br0` owns `10.77.0.1/24`, both ports appear in `bridge link`, and `sudo dnsmasq --test` succeeds.
-- **Wired client gets a home-router address:** the USB Ethernet adapter is not attached to `br0`, or the cable is connected to the wrong adapter.
-- **Race client has a default route:** renew its lease and inspect the dnsmasq file; the empty `option:router` is required.
-- **RTL8812BU disappears or resets:** use a powered hub and better power supply/cable; check the kernel journal.
-- **RTL8812BU has no interface or AP mode:** check `ethtool -i`, `lsmod`, and `iw phy`; install the fallback driver only if the in-kernel driver is unavailable or unusable.
-- **Wi-Fi works until a kernel upgrade:** check `dkms status`. This concern applies to the fallback `88x2bu` driver, not the in-kernel `rtw88` driver.
-- **Transmit-power service fails:** compare `iw reg get`, the channel limit in `iw phy ... info`, and `journalctl -u rh-wifi-txpower`; use `txpower auto` if the driver rejects a fixed setting.
-- **SSH key is rejected:** on a local console, check `namei -l /home/rhadmin/.ssh/authorized_keys`, `journalctl -u ssh`, and `sudo sshd -T`; the directory must be mode `700`, the file mode `600`, and both owned by `rhadmin`.
-- **SSH works through home Wi-Fi but not the AP/Ethernet:** confirm `10.77.0.1/24` is on `br0`, port 22 listens on `0.0.0.0` or `[::]`, and no `ListenAddress` restricts sshd.
-- **Timer permission denied:** check `groups`, `ls -l /dev/serial/by-id/...`, and `SupplementaryGroups=dialout`.
-- **Timer path is missing:** verify the cable carries data and the widscan58 browser flasher has disconnected.
-
-Follow logs with `journalctl -f -u rotorhazard`, `journalctl -f -u hostapd`, or `journalctl -f -u dnsmasq`.
-
-Always shut down cleanly before removing power:
-
-```bash
-sudo shutdown now
-```
 
 ## Updating RotorHazard
 
-Check the [RotorHazard releases](https://github.com/RotorHazard/RotorHazard/releases), read the release notes, and choose an exact stable tag. Do not update from `main`. The example below uses `v4.5.0`; replace it with the newer stable tag when one exists.
-
-First back up the data directory and confirm that the source checkout has no local modifications:
+Choose an exact tag from [RotorHazard releases](https://github.com/RotorHazard/RotorHazard/releases), then back up the data and check for local changes:
 
 ```bash
 sudo systemctl stop rotorhazard
@@ -669,7 +621,7 @@ cp -a ~/rh-data "$HOME/rh-data.backup.$(date +%Y%m%d-%H%M%S)"
 git -C ~/RotorHazard status --short
 ```
 
-The `git status` command must produce no output. If it shows changes, preserve or resolve them before continuing. Then fetch and check out the selected release and update its dependencies:
+Continue only if `git status` is empty. Set `RH_VERSION` to the chosen stable tag:
 
 ```bash
 RH_VERSION=v4.5.0
@@ -685,7 +637,7 @@ sudo systemctl start rotorhazard
 systemctl --no-pager --full status rotorhazard
 ```
 
-The version check must print the selected tag. Do not update immediately before an event; allow time for an ARMv6 dependency build and a complete functional test.
+The version command must print the selected tag. Update early enough to test before an event.
 
 ## References
 
