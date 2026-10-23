@@ -68,17 +68,7 @@ cat "$HOME/.ssh/rotorhazard_ed25519.pub"
 rpi-imager
 ```
 
-Use it to write **Raspberry Pi OS Lite (32-bit)**. Do **not** select the 64-bit image: the original Pi Zero W uses an ARMv6 CPU and cannot boot it. In Imager's OS customisation screen:
-
-1. Set hostname `rotorhazard`.
-2. Create user `rhadmin` and a strong password.
-3. Enter the home Wi-Fi SSID/password and select the correct Wi-Fi country.
-4. Enable SSH, select **Allow public-key authentication only**, and select or paste `~/.ssh/rotorhazard_ed25519.pub`.
-5. Write and safely eject the card.
-
-The built-in Zero W radio supports only 2.4 GHz, so the selected home SSID must offer 2.4 GHz and must not be WPA3-only.
-
-This is the supported Bookworm method. A `wpa_supplicant.conf` copied to `bootfs` is a pre-Bookworm technique and is no longer imported on first boot.
+Use it to write **Raspberry Pi OS Lite (32-bit)**. Do **not** select the 64-bit image: the original Pi Zero W uses an ARMv6 CPU and cannot boot it. 
 
 ### Manual SD-card configuration instead of Imager customisation
 
@@ -88,12 +78,12 @@ Ubuntu can edit both the FAT `bootfs` and ext4 `rootfs` partitions directly. Ins
 lsblk -p -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS,MODEL
 ```
 
-The device names below are examples. Replace `/dev/sdX1` and `/dev/sdX2` with the actual card partitions; for a built-in card reader they may instead be `/dev/mmcblk0p1` and `/dev/mmcblk0p2`. Never guess the device. If Ubuntu automatically mounted either partition, unmount it through Files or with `udisksctl unmount -b /dev/sdX1` and the corresponding partition 2 before continuing.
+The device names below are examples. Replace `/dev/sdX1` and `/dev/sdX2` with the actual card partitions; for a built-in card reader they may instead be `/dev/mmcblk0p1` and `/dev/mmcblk0p2`. Never guess the device. If Ubuntu automatically mounted either partition, unmount it through Files or with `udisksctl unmount -b /dev/mmcblk0p1 && udisksctl unmount -b /dev/mmcblk0p2` and the corresponding partition 2 before continuing.
 
 ```bash
 sudo mkdir -p /mnt/rh-boot /mnt/rh-root
-sudo mount /dev/sdX1 /mnt/rh-boot
-sudo mount /dev/sdX2 /mnt/rh-root
+sudo mount /dev/mmcblk0p1 /mnt/rh-boot
+sudo mount /dev/mmcblk0p2 /mnt/rh-root
 ```
 
 Enable SSH and generate a password hash interactively so the plaintext password is not stored in shell history:
@@ -131,44 +121,49 @@ PermitRootLogin no
 
 Do not add a `ListenAddress`: its absence makes OpenSSH listen on every available interface, including home Wi-Fi and the race bridge.
 
-Create `/mnt/rh-root/etc/NetworkManager/system-connections/home-wifi.nmconnection`:
-
-```ini
-[connection]
-id=home-wifi
-type=wifi
-autoconnect=true
-
-[wifi]
-mode=infrastructure
-ssid=MyHomeWiFi
-
-[wifi-security]
-key-mgmt=wpa-psk
-psk=REPLACE_WITH_HOME_WIFI_PASSWORD
-
-[ipv4]
-method=auto
-
-[ipv6]
-method=auto
-```
-
-Protect the file and unmount the card:
-
 ```bash
-sudo chmod 600 /mnt/rh-root/etc/NetworkManager/system-connections/home-wifi.nmconnection
 sync
 sudo umount /mnt/rh-boot /mnt/rh-root
 ```
 
-After the first login, set the regulatory country immediately:
+Use temporary wired access to continue. Before configuring `br0` later in this runbook, the USB Ethernet adapter is an ordinary DHCP client:
 
-```bash
-sudo raspi-config nonint do_wifi_country CN
-```
+1. Connect the USB Ethernet adapter to a LAN port on the home router.
+2. Boot the Pi and find its new wired address in the router's DHCP leases.
+3. Connect from Ubuntu using the provisioned key:
 
-If Wi-Fi association is blocked by an unset regulatory domain, temporarily connect the USB Ethernet adapter to the home router for the first login, or use Imager customisation.
+   ```bash
+   ssh -i ~/.ssh/rotorhazard_ed25519 rhadmin@WIRED_IP_FROM_ROUTER
+   ```
+
+4. On the Pi, set the country, unblock Wi-Fi, rescan, and create a fresh NetworkManager connection. `--ask` prompts for the Wi-Fi password without placing it in shell history:
+
+   ```bash
+   sudo raspi-config nonint do_wifi_country CN
+   sudo rfkill unblock wifi
+   sudo nmcli radio wifi on
+   sudo nmcli device wifi rescan ifname wlan0
+   nmcli device wifi list ifname wlan0
+   #sudo nmcli connection delete home-wifi 2>/dev/null || true
+   sudo nmcli --ask device wifi connect 'EXACT_HOME_SSID' \
+     ifname wlan0 name home-wifi
+   sudo nmcli connection modify home-wifi \
+     connection.autoconnect yes \
+     connection.autoconnect-priority 100 \
+     connection.autoconnect-retries 0 \
+     connection.interface-name wlan0
+   ```
+
+   For a hidden SSID, add `hidden yes` to the final command.
+
+5. Confirm that `wlan0` is connected and has a home-network address:
+
+   ```bash
+   nmcli device status
+   nmcli -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS device show wlan0
+   ip route
+   ```
+
 
 ## 3. First boot and base setup
 
