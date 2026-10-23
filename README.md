@@ -10,12 +10,14 @@ flowchart TB
     BR0["br0<br/>10.77.0.1/24"]
     WIFI["rh-wifi<br/>RTL8812BU access point"]
     ETH["rh-eth<br/>USB Ethernet"]
+    SENSOR["widscan58 sensor / timer<br/>USB serial"]
     WIFI_CLIENTS["Wi-Fi race clients"]
     ETH_CLIENTS["Wired race clients"]
 
     HOME --- WLAN0
     WLAN0 --- PI
     PI --- BR0
+    PI --- SENSOR
     BR0 --- WIFI
     BR0 --- ETH
     WIFI --- WIFI_CLIENTS
@@ -25,7 +27,7 @@ flowchart TB
 Race clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
 
 > [!IMPORTANT]
-> This guide targets the **original, single-core Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer, so build and load-test this lower-powered setup before an event.
+> This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer, so build and load-test this lower-powered setup before an event.
 
 ## 1. Hardware and values to choose
 
