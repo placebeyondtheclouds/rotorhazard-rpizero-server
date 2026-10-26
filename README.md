@@ -122,6 +122,8 @@ sync
 sudo umount /mnt/rh-boot /mnt/rh-root
 ```
 
+## configure connection to home wifi
+
 Use the USB Ethernet adapter temporarily as a home-router DHCP client:
 
 1. Connect the USB Ethernet adapter to a LAN port on the home router.
@@ -160,9 +162,11 @@ Use the USB Ethernet adapter temporarily as a home-router DHCP client:
    ip route
    ```
 
-## 3. First boot and base setup
+reboot
 
-Insert the card into rpi, connect the powered hub and power, find `rotorhazard.local` or its lease in the home router, and log in:
+## install software
+
+reconnect at home wifi IP
 
 ```bash
 ssh -i ~/.ssh/rotorhazard_ed25519 rhadmin@rotorhazard.local
@@ -188,76 +192,14 @@ sudo systemctl enable --now avahi-daemon
 
 Add `rotorhazard` to the `127.0.0.1` line in `/etc/hosts` with `sudo nano /etc/hosts`.
 
-```
-bash
+```bash
 sudo reboot
 ```
 
 Reconnect over SSH after the reboot.
 
-### Verify key-only SSH
 
-```bash
-sudo sshd -T | grep -E '^(authenticationmethods|pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication|permitrootlogin) '
-sudo ss -lntp | grep -E 'LISTEN.+:22[[:space:]]'
-```
-
-A password-only attempt should fail:
-
-```bash
-ssh -o PubkeyAuthentication=no \
-  -o PreferredAuthentications=password,keyboard-interactive \
-  rhadmin@rotorhazard.local
-```
-
-## 4. Install or verify the RTL8812BU driver
-
-Connect the RTL8812BU Wi-Fi and USB Ethernet adapters to the powered hub. Do not connect a race-side Ethernet cable yet.
-
-```bash
-ip -br link
-iw dev
-lsusb -nn
-uname -r
-sudo dmesg | grep -Ei 'rtw|88x2bu|8812|8822|firmware|usb'
-```
-
-The built-in radio is normally `wlan0`; USB adapters may initially use `wlan1`, `wlx...`, `eth0`, or `enx...`.
-
-### Prefer the in-kernel driver
-
-Kernels 6.12 and newer normally include `rtw88`. Check the bound driver, substituting the temporary interface name:
-
-```bash
-sudo ethtool -i wlan1
-lsmod | grep -E 'rtw_8822bu|rtw88|88x2bu'
-```
-
-If it reports `rtw_8822bu`, keep it. Find the adapter's `phy#` with `iw dev` and confirm AP mode:
-
-```bash
-iw phy phy1 info | sed -n '/Supported interface modes:/,/Band /p'
-```
-
-If the output contains `* AP`, skip the fallback.
-
-### Fallback for a missing or unusable in-kernel driver
-
-Use this only when the adapter has no interface, bound driver, or AP mode. Remove any existing third-party RTL8812BU driver first; never install competing drivers.
-
-```bash
-sudo apt install -y raspberrypi-kernel-headers build-essential bc dkms git
-mkdir -p ~/src
-cd ~/src
-git clone https://github.com/morrownr/88x2bu-20210702.git
-cd 88x2bu-20210702
-sudo sh install-driver.sh NoPrompt
-sudo reboot
-```
-
-After reboot, repeat the checks above. Compilation is slow on the Pi Zero W. Keep the cloned directory for driver upgrades and removal. If the adapter remains missing, inspect `journalctl -k -b`.
-
-## 5. Identify and give the USB adapters stable names
+## set up interfaces and LAN bridge
 
 Record permanent MAC addresses, substituting the actual temporary interface names:
 
@@ -296,7 +238,6 @@ sudo reboot
 
 Run `ip -br link`; continue only when the devices are `rh-wifi`, `rh-eth`, and `wlan0`.
 
-## 6. Build the race-LAN bridge
 
 NetworkManager owns the bridge and wired port; hostapd owns `rh-wifi`.
 
@@ -329,7 +270,7 @@ ip -br address | grep -E '^(br0|rh-eth)[[:space:]]'
 
 `br0` should show `10.77.0.1/24`; `rh-eth` should not have its own address.
 
-## 7. Configure the RTL8812BU access point
+## Configure Wifi AP
 
 Create `/etc/hostapd/hostapd.conf` with `sudo nano`, replacing country, SSID, and passphrase:
 
@@ -369,7 +310,6 @@ iw dev rh-wifi info
 iw dev rh-wifi station dump | grep -c '^Station '
 ```
 
-### Set maximum permitted AP transmit power
 
 Inspect the regulatory and adapter limits (`2000` mBm equals `20` dBm):
 
@@ -387,7 +327,6 @@ sudo iw dev rh-wifi set txpower fixed 2000
 iw dev rh-wifi info
 ```
 
-Use no more than the displayed country/channel limit. The system may clamp the request; do not bypass its regulatory controls.
 
 Create `/etc/systemd/system/rh-wifi-txpower.service` with `sudo nano`:
 
@@ -415,18 +354,9 @@ systemctl --no-pager --full status rh-wifi-txpower.service
 iw dev rh-wifi info
 ```
 
-If the service reports `Invalid argument` or `Operation not supported`, replace `ExecStart` with:
 
-```ini
-ExecStart=/usr/sbin/iw dev rh-wifi set txpower auto
-```
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart rh-wifi-txpower.service
-```
-
-## 8. Configure DHCP and local DNS with no default route
+## Configure DHCP and local DNS with no default route
 
 Create `/etc/dnsmasq.d/rotorhazard.conf` with `sudo nano`:
 
@@ -470,38 +400,9 @@ sudo sysctl --system
 sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding
 ```
 
-Test both Wi-Fi and Ethernet clients. Each must receive `10.77.0.x/24`, reach `10.77.0.1`, and have no default route:
 
-```bash
-ip address
-ip route
-ping -c 3 10.77.0.1
-```
 
-“No Internet” is expected; keep the client connected.
-
-### Verify SSH over both race interfaces
-
-From Ubuntu, connect to the race Wi-Fi and test SSH:
-
-```bash
-ssh -o PasswordAuthentication=no \
-  -i ~/.ssh/rotorhazard_ed25519 \
-  rhadmin@10.77.0.1
-```
-
-Then disconnect Wi-Fi, connect through `rh-eth` using automatic DHCP, and repeat:
-
-```bash
-ip -br address
-ssh -o PasswordAuthentication=no \
-  -i ~/.ssh/rotorhazard_ed25519 \
-  rhadmin@10.77.0.1
-```
-
-Both paths use `10.77.0.1` and the same SSH host key. After verifying DNS, `rotorhazard.lan` also works.
-
-## 9. Prepare the widscan58 timer
+## Prepare the ESP32-C5 sensor
 
 Prepare the widscan58 before attaching it:
 
@@ -520,7 +421,7 @@ readlink -f /dev/serial/by-id/*
 
 Record the `/dev/serial/by-id/...` path; `/dev/ttyACM0` can change. Log out and back in for the new group membership. Do not enable GPIO UART options for this USB timer.
 
-## 10. Install RotorHazard
+## Install RotorHazard
 
 Clone the stable `v4.5.0` release rather than the development branch:
 
@@ -541,8 +442,6 @@ mkdir -p ~/rh-data
 git -C ~/RotorHazard describe --tags --exact-match
 ```
 
-The version check must print `v4.5.0`. Installation may take a long time on the ARMv6 Pi.
-
 Test it interactively before creating a service:
 
 ```bash
@@ -550,11 +449,12 @@ cd ~/RotorHazard/src/server
 ~/.venv/bin/python server.py
 ```
 
-Open `http://10.77.0.1:5000` from a race client, complete setup (settings -> frequency setup -> raceband 8 preset), then stop the server with `Ctrl-C`.
 
-### Configure the USB timer
 
 In **Advanced Settings → Hardware → Serial Ports**, enter the stable path found using `find /dev/serial/by-id -maxdepth 1 -type l -print 2>/dev/null`
+
+Open `http://10.77.0.1:5000` , complete setup (settings -> frequency setup -> raceband 8 preset), then stop the server with `Ctrl-C`.
+
 
 Restart RotorHazard and confirm eight nodes. If the setting is unavailable, stop RotorHazard and set `GENERAL.SERIAL_PORTS` in `~/rh-data/config.json`; never edit it while the server is running.
 
@@ -597,19 +497,9 @@ Reboot:
 sudo reboot
 ```
 
-Confirm after reboot:
-
-1. Both race interfaces assign `10.77.0.x/24` without a gateway and open RotorHazard at `10.77.0.1:5000` and `rotorhazard.lan:5000`.
-2. `systemctl is-active hostapd rh-wifi-txpower dnsmasq rotorhazard` prints `active` four times.
-3. `bridge link` shows `rh-wifi` and `rh-eth` on `br0`.
-4. RotorHazard shows eight timer nodes and live levels.
-5. Key-only SSH works through home Wi-Fi, race Wi-Fi, and race Ethernet; password-only SSH fails.
-6. Race clients cannot reach the home network or Internet.
-7. `iw dev rh-wifi info` shows the effective transmit power.
 
 
-
-## Updating RotorHazard
+## Updating RotorHazard on the rpi
 
 Choose an exact tag from [RotorHazard releases](https://github.com/RotorHazard/RotorHazard/releases), then back up the data and check for local changes:
 
