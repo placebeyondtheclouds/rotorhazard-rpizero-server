@@ -29,9 +29,9 @@ Clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard a
 > [!IMPORTANT]
 > This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer.
 
-## 1. Hardware and values to choose
+## 1. Hardware
 
-You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a widscan58 timer with a data-capable cable.
+You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a ESP32-C5 flashed with widscan58 firmware.
 
 Choose and substitute these values throughout:
 
@@ -45,9 +45,9 @@ Choose and substitute these values throughout:
 | Client subnet | `10.77.0.0/24` |
 | Pi address | `10.77.0.1` |
 
-Use strong passwords. The Pi-user password is for the local console and `sudo`; SSH will be key-only.
+The Pi-user password is for the local console and `sudo`; SSH will be key-only.
 
-## 2. Flash the SD card and configure first-boot Wi-Fi
+Flash the SD card and configure first-boot Wi-Fi
 
 On the Ubuntu computer, install Raspberry Pi Imager
 
@@ -57,13 +57,13 @@ sudo apt install rpi-imager openssl
 ```
 
 
-Write Raspberry Pi OS Lite (32-bit); the ARMv6 Pi Zero W cannot boot the 64-bit image.
+Burn the sd card with Raspberry Pi OS Lite (32-bit).
 
-### Manual SD-card configuration
+### initial configuration
 
 
 
-Insert the freshly imaged card:
+Insert the freshly imaged card into an Ubuntu pc:
 
 ```bash
 lsblk -p -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS,MODEL
@@ -73,7 +73,7 @@ sudo mount /dev/mmcblk0p1 /mnt/rh-boot
 sudo mount /dev/mmcblk0p2 /mnt/rh-root
 ```
 
-Enable SSH and generate a password hash interactively so the plaintext password is not stored in shell history:
+Enable SSH and generate a password hash interactively:
 
 ```bash
 sudo touch /mnt/rh-boot/ssh
@@ -200,6 +200,8 @@ Reconnect over SSH after the reboot.
 
 
 ## set up interfaces and LAN bridge
+
+check that RTL8812BU mac address persists between reboots, I had one card that apparently had damaged eeprom and changed it's mac every reboot.
 
 Record permanent MAC addresses, substituting the actual temporary interface names:
 
@@ -404,7 +406,7 @@ sysctl net.ipv4.ip_forward net.ipv6.conf.all.forwarding
 
 ## Prepare the ESP32-C5 sensor
 
-Prepare the widscan58 before attaching it:
+Prepare the ESP32 board:
 
 1. Flash the board at <https://capnbry.github.io/widscan58/>.
 2. Connect, select **RotorHazard mode**, configure receiver gain/level/filter, and click **Save**.
