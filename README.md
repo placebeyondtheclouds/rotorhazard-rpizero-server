@@ -1,6 +1,6 @@
-# Wifi access point and RotorHazard server on a Raspberry Pi Zero W
+# RotorHazard server on a Raspberry Pi Zero W (Wifi AP + eth)
 
-This runbook builds a headless [RotorHazard](https://github.com/RotorHazard/RotorHazard) server. The built-in Wi-Fi joins the home network for administration; USB Wi-Fi and Ethernet provide an isolated race LAN; a [widscan58](https://github.com/CapnBry/widscan58/blob/main/docs/RotorHazard.md) timer connects over USB serial.
+This runbook (for Ubuntu) builds a headless [RotorHazard](https://github.com/RotorHazard/RotorHazard) server. The built-in Wi-Fi joins the home network for initial setup and administration; USB Wi-Fi and Ethernet provide an isolated race LAN; a [widscan58](https://github.com/CapnBry/widscan58/blob/main/docs/RotorHazard.md) timer connects over USB serial.
 
 ```mermaid
 flowchart TB
@@ -27,11 +27,11 @@ flowchart TB
 Race clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
 
 > [!IMPORTANT]
-> This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer, so build and load-test this lower-powered setup before an event.
+> This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer.
 
 ## 1. Hardware and values to choose
 
-You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a widscan58 timer with a data-capable cable. Use a powered hub because the three USB devices can exceed the Pi's power budget.
+You need an original Pi Zero W, suitable power supply, microSD card, powered USB OTG hub, RTL8812BU adapter, USB Ethernet adapter, and a widscan58 timer with a data-capable cable.
 
 Choose and substitute these values throughout:
 
@@ -49,36 +49,25 @@ Use strong passwords. The Pi-user password is for the local console and `sudo`; 
 
 ## 2. Flash the SD card and configure first-boot Wi-Fi
 
-On the Ubuntu computer, install Raspberry Pi Imager (use the [official package](https://www.raspberrypi.com/software/) if Ubuntu does not provide it):
+On the Ubuntu computer, install Raspberry Pi Imager
 
 ```bash
 sudo apt update
 sudo apt install rpi-imager openssl
 ```
 
-Create and back up a passphrase-protected administration key:
 
-```bash
-if [ ! -e "$HOME/.ssh/rotorhazard_ed25519" ]; then
-  ssh-keygen -t ed25519 -a 100 -f "$HOME/.ssh/rotorhazard_ed25519" -C rotorhazard-admin
-fi
-cat "$HOME/.ssh/rotorhazard_ed25519.pub"
-rpi-imager
-```
+Write Raspberry Pi OS Lite (32-bit); the ARMv6 Pi Zero W cannot boot the 64-bit image.
 
-Write **Raspberry Pi OS Lite (32-bit)**; the ARMv6 Pi Zero W cannot boot the 64-bit image.
+### Manual SD-card configuration
 
-### Manual SD-card configuration instead of Imager customisation
 
-Insert the freshly imaged card and identify it by size and model:
+
+Insert the freshly imaged card:
 
 ```bash
 lsblk -p -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS,MODEL
-```
 
-Use the actual card partitions—never guess. Built-in readers commonly use `/dev/mmcblk0p1` and `/dev/mmcblk0p2`. Unmount any automatically mounted partitions before continuing.
-
-```bash
 sudo mkdir -p /mnt/rh-boot /mnt/rh-root
 sudo mount /dev/mmcblk0p1 /mnt/rh-boot
 sudo mount /dev/mmcblk0p2 /mnt/rh-root
@@ -95,6 +84,17 @@ Save the following single line as `/mnt/rh-boot/userconf.txt`, replacing the ent
 
 ```text
 rhadmin:$6$REPLACE_WITH_THE_COMPLETE_HASH
+```
+
+
+Create the administration key:
+
+```bash
+if [ ! -e "$HOME/.ssh/rotorhazard_ed25519" ]; then
+  ssh-keygen -t ed25519 -a 100 -f "$HOME/.ssh/rotorhazard_ed25519" -C rotorhazard-admin
+fi
+cat "$HOME/.ssh/rotorhazard_ed25519.pub"
+rpi-imager
 ```
 
 Install the public key for the first user (UID/GID 1000):
@@ -116,8 +116,6 @@ KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 PermitRootLogin no
 ```
-
-Do not add `ListenAddress`; SSH must listen on all interfaces.
 
 ```bash
 sync
@@ -164,18 +162,12 @@ Use the USB Ethernet adapter temporarily as a home-router DHCP client:
 
 ## 3. First boot and base setup
 
-Insert the card, connect the powered hub and power, find `rotorhazard.local` or its lease in the home router, and log in:
+Insert the card into rpi, connect the powered hub and power, find `rotorhazard.local` or its lease in the home router, and log in:
 
 ```bash
 ssh -i ~/.ssh/rotorhazard_ed25519 rhadmin@rotorhazard.local
 ```
 
-Confirm that the image reports `armv6l` and `32`:
-
-```bash
-uname -m
-getconf LONG_BIT
-```
 
 Update and install packages:
 
@@ -192,10 +184,14 @@ sudo apt install -y \
   python3-dev python3-venv libffi-dev python3-smbus build-essential \
   python3-pip git scons swig python3-rpi.gpio wget
 sudo systemctl enable --now avahi-daemon
-sudo reboot
 ```
 
 Add `rotorhazard` to the `127.0.0.1` line in `/etc/hosts` with `sudo nano /etc/hosts`.
+
+```
+bash
+sudo reboot
+```
 
 Reconnect over SSH after the reboot.
 
