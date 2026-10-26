@@ -11,8 +11,8 @@ flowchart TB
     WIFI["rh-wifi<br/>RTL8812BU access point"]
     ETH["rh-eth<br/>USB Ethernet"]
     SENSOR["widscan58 sensor / timer<br/>USB serial"]
-    WIFI_CLIENTS["Wi-Fi race clients"]
-    ETH_CLIENTS["Wired race clients"]
+    WIFI_CLIENTS["Wi-Fi clients"]
+    ETH_CLIENTS["Wired clients"]
 
     HOME --- WLAN0
     WLAN0 --- PI
@@ -24,7 +24,7 @@ flowchart TB
     ETH --- ETH_CLIENTS
 ```
 
-Race clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
+Clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
 
 > [!IMPORTANT]
 > This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer.
@@ -41,9 +41,9 @@ Choose and substitute these values throughout:
 | Pi hostname | `rotorhazard` |
 | Wi-Fi country | `CN` |
 | Home Wi-Fi SSID | `MyHomeWiFi` |
-| Race AP SSID | `RotorHazard` |
-| Race subnet | `10.77.0.0/24` |
-| Pi race address | `10.77.0.1` |
+| AP SSID | `RotorHazard` |
+| Client subnet | `10.77.0.0/24` |
+| Pi address | `10.77.0.1` |
 
 Use strong passwords. The Pi-user password is for the local console and `sudo`; SSH will be key-only.
 
@@ -248,7 +248,7 @@ NetworkManager owns the bridge and wired port; hostapd owns `rh-wifi`.
 unmanaged-devices=interface-name:rh-wifi
 ```
 
-Create `br0`, give it the static race address, and attach USB Ethernet:
+Create `br0`, give it the static address, and attach USB Ethernet:
 
 ```bash
 sudo systemctl reload NetworkManager
@@ -291,7 +291,7 @@ ignore_broadcast_ssid=0
 wpa=2
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
-wpa_passphrase=REPLACE_WITH_A_STRONG_RACE_PASSWORD
+wpa_passphrase=REPLACE_WITH_A_STRONG_PASSWORD
 
 # No max_num_sta setting: hostapd applies no administrator-configured client cap.
 ```
@@ -361,7 +361,7 @@ iw dev rh-wifi info
 Create `/etc/dnsmasq.d/rotorhazard.conf` with `sudo nano`:
 
 ```ini
-# Serve only the isolated race bridge.
+# Serve only the isolated bridge.
 interface=br0
 bind-dynamic
 dhcp-authoritative
@@ -371,7 +371,7 @@ dhcp-range=10.77.0.2,10.77.0.254,255.255.255.0,12h
 # Empty by design: clients receive no default gateway.
 dhcp-option=option:router
 
-# Answer only for the race name; do not relay Internet DNS.
+# Answer only for the local name; do not relay Internet DNS.
 dhcp-option=option:dns-server,10.77.0.1
 no-resolv
 domain-needed
