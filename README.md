@@ -24,7 +24,7 @@ flowchart TB
     ETH --- ETH_CLIENTS
 ```
 
-Clients receive `10.77.0.x/24` addresses with no gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
+Clients receive `10.77.0.x/24` addresses with no default gateway and reach RotorHazard at `http://10.77.0.1:5000` or `http://rotorhazard.lan:5000`.
 
 > [!IMPORTANT]
 > This guide targets the **Raspberry Pi Zero W (ARMv6)** and 32-bit Raspberry Pi OS Lite (Bookworm). RotorHazard recommends a Pi 3 or newer.
@@ -358,7 +358,7 @@ iw dev rh-wifi info
 
 
 
-## Configure DHCP and local DNS with no default route
+## Configure DHCP and local DNS
 
 Create `/etc/dnsmasq.d/rotorhazard.conf` with `sudo nano`:
 
@@ -453,14 +453,14 @@ cd ~/RotorHazard/src/server
 
 
 
-In **Advanced Settings → Hardware → Serial Ports**, enter the stable path found using `find /dev/serial/by-id -maxdepth 1 -type l -print 2>/dev/null`
+In Advanced Settings → Hardware → Serial Ports, enter the stable path found using `find /dev/serial/by-id -maxdepth 1 -type l -print 2>/dev/null`
 
 Open `http://10.77.0.1:5000` , complete setup (settings -> frequency setup -> raceband 8 preset), then stop the server with `Ctrl-C`.
 
 
 Restart RotorHazard and confirm eight nodes. If the setting is unavailable, stop RotorHazard and set `GENERAL.SERIAL_PORTS` in `~/rh-data/config.json`; never edit it while the server is running.
 
-## 11. Start RotorHazard automatically
+## Start RotorHazard automatically
 
 Run as the user that installed RotorHazard:
 
